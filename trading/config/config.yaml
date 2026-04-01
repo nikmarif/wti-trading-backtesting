@@ -69,9 +69,17 @@ model:
   eval_metric: "rmse"
   random_state: 42
   n_jobs: -1
+  # GPU acceleration (requires XGBoost >= 2.0 with CUDA support)
+  # Set device: "cuda" to use GPU, or "cpu" to disable.
+  device: "cuda"
+  tree_method: "hist"   # "hist" is required when device is "cuda"
   # Early stopping: stop if val RMSE doesn't improve for this many rounds.
   # Set to null to disable.
   early_stopping_rounds: 50
+  # Exponential decay sample weighting: recent bars get higher weight.
+  # Half-life in bars — e.g. 50000 means a bar 50k steps ago has half the weight
+  # of the most recent bar. Set to null to disable (all bars weighted equally).
+  sample_weight_halflife: 50000
 
 # ---------------------------------------------------------------------------
 # Backtest

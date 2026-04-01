@@ -31,6 +31,23 @@ logger = get_logger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Sample weighting
+# ─────────────────────────────────────────────────────────────────────────────
+
+def exponential_weights(n: int, halflife: float) -> np.ndarray:
+    """
+    Return an array of length n with exponential decay weights.
+
+    The most recent bar (index n-1) has weight 1.0; a bar halflife steps
+    earlier has weight 0.5.  Weights are NOT normalised so XGBoost treats
+    them as relative importance, not probabilities.
+    """
+    decay = np.log(2) / halflife
+    indices = np.arange(n)
+    return np.exp(-decay * (n - 1 - indices))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Model construction
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -55,6 +72,10 @@ def build_model(model_cfg: dict) -> xgb.XGBRegressor:
         "n_jobs":           model_cfg.get("n_jobs", -1),
         "verbosity":        0,
     }
+    if "device" in model_cfg:
+        params["device"] = model_cfg["device"]
+    if "tree_method" in model_cfg:
+        params["tree_method"] = model_cfg["tree_method"]
     return xgb.XGBRegressor(**params)
 
 
@@ -96,6 +117,7 @@ def run_walk_forward(
     save_models = output_cfg.get("save_fold_models", True)
     artifacts_dir = ensure_dir(output_cfg["artifacts_dir"])
     early_stop = model_cfg.get("early_stopping_rounds", None)
+    halflife = model_cfg.get("sample_weight_halflife", None)
 
     all_predictions: list[pd.DataFrame] = []
 
@@ -107,6 +129,12 @@ def run_walk_forward(
 
         model = build_model(model_cfg)
 
+        # Compute sample weights: recent bars weighted more heavily
+        w_train = (
+            exponential_weights(len(X_train), halflife)
+            if halflife is not None else None
+        )
+
         # Fit — use early stopping if configured and we have enough train data
         if early_stop is not None:
             # Use last 10% of training set as internal eval set for early stopping.
@@ -116,15 +144,17 @@ def run_walk_forward(
             eval_y = y_train.iloc[split_at:]
             X_train_fit = X_train.iloc[:split_at]
             y_train_fit = y_train.iloc[:split_at]
+            w_train_fit = w_train[:split_at] if w_train is not None else None
 
             model.set_params(early_stopping_rounds=early_stop)
             model.fit(
                 X_train_fit, y_train_fit,
+                sample_weight=w_train_fit,
                 eval_set=[(eval_X, eval_y)],
                 verbose=False,
             )
         else:
-            model.fit(X_train, y_train, verbose=False)
+            model.fit(X_train, y_train, sample_weight=w_train, verbose=False)
 
         y_pred = model.predict(X_val)
 
