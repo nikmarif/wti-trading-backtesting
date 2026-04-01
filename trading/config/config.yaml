@@ -1,0 +1,99 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Oil 1-Minute Return Predictor — Master Config
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ---------------------------------------------------------------------------
+# Data
+# ---------------------------------------------------------------------------
+data:
+  # --- Source selection ---
+  # Options:
+  #   "histdata"  → HistData.com WTI 1-min CSVs (zipped or extracted)
+  #   "csv"       → single CSV file at raw_path
+  #   "parquet"   → single Parquet file at raw_path
+  #   (leave use_synthetic: true to skip all of the above)
+  source: "histdata"
+
+  # HistData source settings
+  histdata_folder: "data/wtiusd"
+  # Which years to load. Comment out (or set to null) to load ALL available years.
+  years: [2018, 2019, 2020, 2021, 2022, 2023]
+
+  # Generic CSV/Parquet fallback (used when source: csv or parquet)
+  raw_path: "data/raw/oil_1m.csv"
+  processed_path: "data/processed/oil_1m_clean.parquet"
+
+  # Column names (HistData uses no header; loader assigns these automatically)
+  timestamp_col: "timestamp"
+
+  # Timezone for timestamps. HistData WTI is in UTC (server time).
+  timezone: "UTC"
+
+  # If true, reindex to a full 1-minute grid and forward-fill OHLC, zero-fill volume.
+  reindex_to_1min: false  # WTI trades ~23h/day; gaps are real market closures
+
+  # Use the synthetic prototype loader (overrides source above when true).
+  use_synthetic: false
+  synthetic_n_bars: 50000
+
+# ---------------------------------------------------------------------------
+# Feature engineering
+# ---------------------------------------------------------------------------
+features:
+  lag_range: [1, 20]             # ret_lag_1 … ret_lag_20
+  rolling_windows: [5, 10, 20, 60]  # windows used for rolling stats, vol, momentum
+  momentum_windows: [3, 5, 10, 20]  # cumulative return windows
+  cyclical_time: true            # sin/cos encoding of hour/minute/dow
+
+# ---------------------------------------------------------------------------
+# Walk-forward validation
+# ---------------------------------------------------------------------------
+validation:
+  min_train_bars: 15000   # minimum bars in first training window (~10 days)
+  val_bars: 5000          # bars per validation fold (~3.5 days)
+  step_bars: 2500         # advance train window by this many bars each fold
+
+# ---------------------------------------------------------------------------
+# XGBoost hyperparameters
+# ---------------------------------------------------------------------------
+model:
+  n_estimators: 500
+  max_depth: 4
+  learning_rate: 0.04
+  subsample: 0.8
+  colsample_bytree: 0.8
+  min_child_weight: 5
+  reg_alpha: 0.1
+  reg_lambda: 1.0
+  objective: "reg:squarederror"
+  eval_metric: "rmse"
+  random_state: 42
+  n_jobs: -1
+  # Early stopping: stop if val RMSE doesn't improve for this many rounds.
+  # Set to null to disable.
+  early_stopping_rounds: 50
+
+# ---------------------------------------------------------------------------
+# Backtest
+# ---------------------------------------------------------------------------
+backtest:
+  # Primary threshold (fraction). Long if pred > threshold, short if < -threshold.
+  threshold: 0.0002
+  # Transaction cost as a fraction of notional per side (e.g. 0.0001 = 1 bp).
+  cost_per_trade: 0.0001
+  # Additional slippage fraction per side.
+  slippage: 0.00005
+  # Sweep these thresholds to find sensitivity.
+  threshold_sweep: [0.00005, 0.0001, 0.0002, 0.0003, 0.0005, 0.001]
+  # Annualisation factor: minutes per year (252 trading days * 390 min/day ≈ 98k).
+  # WTI futures trade ~23h/day → 252 * 1380 ≈ 348k.  Use 98000 for equity-hours.
+  annualise_factor: 98000
+
+# ---------------------------------------------------------------------------
+# Outputs
+# ---------------------------------------------------------------------------
+output:
+  artifacts_dir: "data/artifacts"
+  predictions_path: "data/artifacts/oos_predictions.parquet"
+  metrics_path: "data/artifacts/metrics.json"
+  save_fold_models: true

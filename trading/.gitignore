@@ -1,0 +1,24 @@
+# Data — raw files and generated outputs are not versioned
+data/raw/*
+data/processed/*
+data/artifacts/*
+data/wtiusd/*
+
+# Keep the empty directory placeholders
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/artifacts/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
