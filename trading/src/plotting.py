@@ -186,7 +186,186 @@ def plot_fold_metrics(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 6. Threshold sweep table plot
+# 6. Strategy trade chart
+# ─────────────────────────────────────────────────────────────────────────────
+
+def plot_strategy_trades(
+    bt: pd.DataFrame,
+    strategy_name: str,
+    artifacts_dir: str | Path,
+    max_bars: int = 500,
+) -> Path:
+    """
+    Two-panel chart:
+      - Top: price with shaded holding regions, entry markers, and P&L labels at exit.
+      - Bottom: cumulative equity curve over the same window.
+
+    Parameters
+    ----------
+    bt : pd.DataFrame
+        Output of run_backtest_from_positions(). Must have columns:
+        y_true, position, strategy_ret, cumulative_ret.
+        Index should be a DatetimeIndex (used as x-axis).
+    strategy_name : str
+        Used in the chart title.
+    artifacts_dir : str or Path
+        Directory to save the PNG.
+    max_bars : int
+        Number of bars to display (first max_bars rows of bt).
+    """
+    artifacts_dir = ensure_dir(artifacts_dir)
+    window = bt.iloc[:max_bars].copy()
+
+    # Reconstruct price from cumulative log returns relative to an arbitrary base.
+    # y_true[t] = log(close[t+1]/close[t]), so close[t] = base * exp(cumsum(y_true)[t-1])
+    base = 100.0
+    log_price = np.concatenate([[0.0], window["y_true"].cumsum().values[:-1]])
+    price = base * np.exp(log_price)
+
+    # ── Identify trades ───────────────────────────────────────────────────────
+    # A trade is a contiguous run of non-zero position.
+    pos = window["position"]
+    trades = []
+    in_trade = False
+    entry_idx = None
+    entry_price = None
+    direction = 0
+
+    for i, (ts, p) in enumerate(pos.items()):
+        if not in_trade and p != 0:
+            in_trade = True
+            entry_idx = i
+            entry_price = price[i]
+            direction = p
+        elif in_trade and (p == 0 or p != direction):
+            # Close the trade at bar i-1
+            exit_idx = i - 1
+            pnl = window["strategy_ret"].iloc[entry_idx:exit_idx + 1].sum()
+            trades.append({
+                "entry_i":     entry_idx,
+                "exit_i":      exit_idx,
+                "entry_ts":    window.index[entry_idx],
+                "exit_ts":     window.index[exit_idx],
+                "entry_price": entry_price,
+                "exit_price":  price[exit_idx],
+                "direction":   direction,
+                "pnl":         pnl,
+            })
+            in_trade = False
+            # Immediately open a new trade if new position is non-zero
+            if p != 0:
+                in_trade = True
+                entry_idx = i
+                entry_price = price[i]
+                direction = p
+
+    # Close any open trade at end of window
+    if in_trade:
+        exit_idx = len(window) - 1
+        pnl = window["strategy_ret"].iloc[entry_idx:exit_idx + 1].sum()
+        trades.append({
+            "entry_i":     entry_idx,
+            "exit_i":      exit_idx,
+            "entry_ts":    window.index[entry_idx],
+            "exit_ts":     window.index[exit_idx],
+            "entry_price": entry_price,
+            "exit_price":  price[exit_idx],
+            "direction":   direction,
+            "pnl":         pnl,
+        })
+
+    # ── Figure ────────────────────────────────────────────────────────────────
+    fig, (ax_price, ax_equity) = plt.subplots(
+        2, 1, figsize=(14, 8),
+        gridspec_kw={"height_ratios": [3, 1]},
+        sharex=False,
+    )
+    x = np.arange(len(window))
+    xtick_step = max(1, len(window) // 10)
+    xtick_pos = x[::xtick_step]
+    xtick_labels = [window.index[i].strftime("%m-%d %H:%M") for i in xtick_pos]
+
+    # ── Top panel: price + trades ─────────────────────────────────────────────
+    ax_price.plot(x, price, color="#333333", lw=0.9, zorder=2, label="Price (rebased)")
+
+    for t in trades:
+        ei, xi = t["entry_i"], t["exit_i"]
+        color = "#2ecc71" if t["direction"] == 1 else "#e74c3c"
+        light = "#d5f5e3" if t["direction"] == 1 else "#fadbd8"
+
+        # Shaded holding region
+        ax_price.axvspan(ei, xi, color=light, alpha=0.6, zorder=1)
+
+        # Entry marker
+        marker = "^" if t["direction"] == 1 else "v"
+        ax_price.scatter(
+            ei, price[ei], marker=marker, color=color,
+            s=60, zorder=4, linewidths=0,
+        )
+
+        # Exit marker (circle)
+        ax_price.scatter(
+            xi, price[xi], marker="o", color=color,
+            s=40, zorder=4, linewidths=0,
+        )
+
+        # P&L label at exit — only if trade is fully within window
+        pnl_pct = t["pnl"] * 100
+        label = f"{'+' if pnl_pct >= 0 else ''}{pnl_pct:.3f}%"
+        label_color = "#1a8a4a" if pnl_pct >= 0 else "#c0392b"
+        ax_price.annotate(
+            label,
+            xy=(xi, price[xi]),
+            xytext=(0, 10 if t["direction"] == 1 else -14),
+            textcoords="offset points",
+            fontsize=6.5,
+            color=label_color,
+            ha="center",
+            zorder=5,
+        )
+
+    ax_price.set_title(
+        f"{strategy_name} — Price with Trades  (first {len(window)} bars)",
+        fontsize=11, fontweight="bold",
+    )
+    ax_price.set_ylabel("Price (rebased to 100)")
+    ax_price.set_xticks(xtick_pos)
+    ax_price.set_xticklabels(xtick_labels, rotation=30, ha="right", fontsize=7)
+
+    # Legend elements
+    from matplotlib.patches import Patch
+    from matplotlib.lines import Line2D
+    legend_els = [
+        Line2D([0], [0], color="#333333", lw=1, label="Price"),
+        Patch(facecolor="#d5f5e3", edgecolor="none", label="Long"),
+        Patch(facecolor="#fadbd8", edgecolor="none", label="Short"),
+    ]
+    ax_price.legend(handles=legend_els, fontsize=8, loc="upper left")
+
+    # ── Bottom panel: equity curve ────────────────────────────────────────────
+    cum = window["cumulative_ret"].values
+    ax_equity.plot(x, cum, color="steelblue", lw=0.9)
+    ax_equity.axhline(0, color="k", lw=0.5, linestyle="--")
+    ax_equity.fill_between(x, cum, 0,
+                           where=(cum >= 0), color="#d5f5e3", alpha=0.7)
+    ax_equity.fill_between(x, cum, 0,
+                           where=(cum < 0),  color="#fadbd8", alpha=0.7)
+    ax_equity.set_ylabel("Cum. log return")
+    ax_equity.set_xlabel("Bar")
+    ax_equity.set_xticks(xtick_pos)
+    ax_equity.set_xticklabels(xtick_labels, rotation=30, ha="right", fontsize=7)
+
+    fig.suptitle(
+        f"Backtest — {strategy_name}",
+        fontsize=13, fontweight="bold", y=1.01,
+    )
+
+    fname = f"trades_{strategy_name.lower().replace(' ', '_')}.png"
+    return _save(fig, artifacts_dir / fname)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 7. Threshold sweep table plot
 # ─────────────────────────────────────────────────────────────────────────────
 
 def plot_threshold_sweep(

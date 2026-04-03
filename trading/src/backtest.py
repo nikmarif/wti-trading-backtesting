@@ -123,10 +123,15 @@ def compute_backtest_stats(bt: pd.DataFrame, annualise_factor: int = 98_000) -> 
     total_bars = len(bt)
     turnover = float(trades / total_bars)
 
-    # Hit rate: among bars where we had a non-zero position, fraction we were correct
+    # Hit rate: among bars where we had a non-zero position, fraction we were correct.
+    # Uses y_pred if available (ML backtest), otherwise falls back to position sign.
     active = bt[positions != 0]
     if len(active):
-        hit_rate = float((np.sign(active["y_pred"]) == np.sign(active["y_true"])).mean())
+        if "y_pred" in bt.columns:
+            signal = np.sign(active["y_pred"])
+        else:
+            signal = active["position"]
+        hit_rate = float((signal == np.sign(active["y_true"])).mean())
         avg_ret_per_trade = float(active["strategy_ret"].mean())
     else:
         hit_rate = float("nan")
@@ -147,6 +152,54 @@ def compute_backtest_stats(bt: pd.DataFrame, annualise_factor: int = 98_000) -> 
         "fraction_flat": float((positions == 0).mean()),
     }
     return stats
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Position-based backtest (for strategies that output positions directly)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def run_backtest_from_positions(
+    prices: pd.Series,
+    positions: pd.Series,
+    cost_per_trade: float = 0.0001,
+    slippage: float = 0.00005,
+    annualise_factor: int = 98_000,
+) -> pd.DataFrame:
+    """
+    Run a backtest given a price series and a pre-computed position series.
+
+    Parameters
+    ----------
+    prices : pd.Series
+        Close prices (or any price series), indexed by timestamp.
+    positions : pd.Series
+        Position signal: +1 (long), -1 (short), 0 (flat). Same index as prices.
+    cost_per_trade : float
+        One-way cost as a fraction of notional.
+    slippage : float
+        Additional one-way slippage fraction.
+    annualise_factor : int
+        Number of bars per year for Sharpe annualisation.
+
+    Returns
+    -------
+    pd.DataFrame with columns: y_true, position, tc, strategy_ret, cumulative_ret.
+    """
+    bt = pd.DataFrame(index=prices.index)
+    bt["y_true"] = np.log(prices).diff().shift(-1)  # next-bar log return
+    bt["position"] = positions.reindex(bt.index).fillna(0).astype(int)
+
+    # Drop last row — no y_true available for it
+    bt = bt.iloc[:-1].copy()
+
+    pos_change = bt["position"].diff().abs()
+    pos_change.iloc[0] = abs(bt["position"].iloc[0])
+    bt["tc"] = pos_change * (cost_per_trade + slippage)
+
+    bt["strategy_ret"] = bt["position"] * bt["y_true"] - bt["tc"]
+    bt["cumulative_ret"] = bt["strategy_ret"].cumsum()
+
+    return bt
 
 
 # ─────────────────────────────────────────────────────────────────────────────

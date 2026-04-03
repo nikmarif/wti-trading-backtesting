@@ -1,12 +1,14 @@
-# Oil 1-Minute Return Predictor
+# WTI Trading Backtesting
 
-XGBoost regression pipeline for predicting next-1-minute crude oil log returns.
+XGBoost regression pipeline for predicting next-1-minute crude oil log returns, plus a modular strategy backtester for testing rule-based strategies (MA crossover, RSI, Bollinger Bands, and any custom strategy you add).
 
 ---
 
 ## Project objective
 
 Predict `target[t] = log(close[t+1] / close[t])` using only information available at the end of bar `t`.  The goal is to evaluate whether any predictive signal exists in 1-minute OHLCV data, and whether that signal survives transaction costs in a simple backtest.
+
+A secondary goal is to provide a clean, modular framework for comparing the ML signal against simple technical strategies on the same data and cost assumptions.
 
 ---
 
@@ -96,7 +98,7 @@ data:
   synthetic_n_bars: 50000
 ```
 
-### 3. Run
+### 3. Run the ML pipeline
 
 ```bash
 python scripts/run_pipeline.py
@@ -104,6 +106,51 @@ python scripts/run_pipeline.py
 python scripts/run_pipeline.py --cv rolling
 # or with a custom config:
 python scripts/run_pipeline.py --config my_config.yaml
+```
+
+### 4. Run a rule-based strategy backtest
+
+```bash
+# List available strategies
+python scripts/run_strategy_backtest.py --list
+
+# Run with defaults
+python scripts/run_strategy_backtest.py --strategy ma_crossover
+python scripts/run_strategy_backtest.py --strategy rsi
+python scripts/run_strategy_backtest.py --strategy bollinger
+
+# Override strategy parameters
+python scripts/run_strategy_backtest.py --strategy ma_crossover --params fast=3 slow=30 ma_type=ema
+python scripts/run_strategy_backtest.py --strategy rsi --params period=7 oversold=25 overbought=75
+
+# Save a trade chart (shows entries, exits, and P&L per trade)
+python scripts/run_strategy_backtest.py --strategy ma_crossover --plot
+python scripts/run_strategy_backtest.py --strategy ma_crossover --plot --plot-bars 200
+```
+
+---
+
+## How to add a new strategy
+
+1. Open `src/strategies/technical.py`.
+2. Subclass `BaseStrategy` and implement `generate_positions(ohlcv) -> pd.Series` returning `+1`, `-1`, or `0` for each bar.
+3. Add an entry to the `REGISTRY` dict at the bottom of the file.
+
+```python
+class MyStrategy(BaseStrategy):
+    def __init__(self, period: int = 10):
+        self.period = period
+
+    def generate_positions(self, ohlcv: pd.DataFrame) -> pd.Series:
+        # your logic here — no lookahead allowed
+        ...
+
+REGISTRY["my_strategy"] = (MyStrategy, {"period": 10})
+```
+
+Then run it immediately:
+```bash
+python scripts/run_strategy_backtest.py --strategy my_strategy --plot
 ```
 
 ---
@@ -141,6 +188,7 @@ All outputs land in `data/artifacts/`:
 | `fold_metrics.png` | Per-fold correlation and sign accuracy |
 | `threshold_sweep.png` | Sharpe and return vs threshold |
 | `threshold_sweep.csv` | Numerical threshold sweep table |
+| `trades_<strategy>.png` | Trade chart: price, entry/exit markers, per-trade P&L, equity curve |
 | `oil_1m_clean.parquet` | Cleaned OHLCV data (in `data/processed/`) |
 
 ---
@@ -181,12 +229,18 @@ trading/
 │   ├── feature_engineering.py  # leakage-safe feature construction
 │   ├── validation.py        # expanding/rolling walk-forward CV
 │   ├── train.py             # XGBoost walk-forward training loop
-│   ├── backtest.py          # threshold backtest + sweep
+│   ├── backtest.py          # threshold backtest + position-based backtest + sweep
 │   ├── metrics.py           # RMSE, MAE, correlation, sign accuracy
-│   ├── plotting.py          # all figures
-│   └── utils.py             # config loading, logging, path helpers
+│   ├── plotting.py          # all figures, including trade chart
+│   ├── utils.py             # config loading, logging, path helpers
+│   └── strategies/
+│       ├── base.py          # BaseStrategy abstract class
+│       └── technical.py     # MACrossover, RSI, BollingerBand + REGISTRY
 ├── scripts/
-│   └── run_pipeline.py      # end-to-end runner
+│   ├── run_pipeline.py      # end-to-end ML pipeline runner
+│   └── run_strategy_backtest.py  # standalone rule-based strategy runner
+├── tests/
+│   └── test_strategies.py  # unit tests for strategies + backtest engine
 ├── notebooks/
 │   └── exploration.ipynb    # ad-hoc analysis
 ├── requirements.txt
