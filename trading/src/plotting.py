@@ -194,10 +194,13 @@ def plot_strategy_trades(
     strategy_name: str,
     artifacts_dir: str | Path,
     max_bars: int = 500,
+    prices: pd.Series | None = None,
+    indicators: dict | None = None,
 ) -> Path:
     """
     Two-panel chart:
-      - Top: price with shaded holding regions, entry markers, and P&L labels at exit.
+      - Top: price with shaded holding regions, entry markers, P&L labels, and
+             optional indicator overlays (MAs, bands, etc.).
       - Bottom: cumulative equity curve over the same window.
 
     Parameters
@@ -212,15 +215,24 @@ def plot_strategy_trades(
         Directory to save the PNG.
     max_bars : int
         Number of bars to display (first max_bars rows of bt).
+    prices : pd.Series, optional
+        Original close price series. If provided, used directly instead of
+        reconstructing from log returns.
+    indicators : dict[str, pd.Series], optional
+        Extra lines to overlay on the price panel, e.g. {"Fast MA (5)": series}.
+        Series should share the same index as prices/bt.
     """
     artifacts_dir = ensure_dir(artifacts_dir)
     window = bt.iloc[:max_bars].copy()
 
-    # Reconstruct price from cumulative log returns relative to an arbitrary base.
-    # y_true[t] = log(close[t+1]/close[t]), so close[t] = base * exp(cumsum(y_true)[t-1])
-    base = 100.0
-    log_price = np.concatenate([[0.0], window["y_true"].cumsum().values[:-1]])
-    price = base * np.exp(log_price)
+    # Price — use real prices if provided, otherwise reconstruct from log returns
+    if prices is not None:
+        price_window = prices.reindex(window.index)
+        price = price_window.values
+    else:
+        base = 100.0
+        log_price = np.concatenate([[0.0], window["y_true"].cumsum().values[:-1]])
+        price = base * np.exp(log_price)
 
     # ── Identify trades ───────────────────────────────────────────────────────
     # A trade is a contiguous run of non-zero position.
@@ -286,7 +298,14 @@ def plot_strategy_trades(
     xtick_labels = [window.index[i].strftime("%m-%d %H:%M") for i in xtick_pos]
 
     # ── Top panel: price + trades ─────────────────────────────────────────────
-    ax_price.plot(x, price, color="#333333", lw=0.9, zorder=2, label="Price (rebased)")
+    price_label = "Price" if prices is not None else "Price (rebased)"
+    ax_price.plot(x, price, color="#333333", lw=0.9, zorder=2, label=price_label)
+
+    # Indicator overlays (MAs, bands, etc.)
+    indicator_colors = ["#e67e22", "#8e44ad", "#2980b9", "#16a085"]
+    for (ind_label, ind_series), color in zip((indicators or {}).items(), indicator_colors):
+        ind_window = ind_series.reindex(window.index).values
+        ax_price.plot(x, ind_window, lw=0.9, color=color, zorder=3, label=ind_label)
 
     for t in trades:
         ei, xi = t["entry_i"], t["exit_i"]

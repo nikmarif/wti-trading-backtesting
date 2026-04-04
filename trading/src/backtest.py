@@ -112,11 +112,18 @@ def compute_backtest_stats(bt: pd.DataFrame, annualise_factor: int = 98_000) -> 
     sigma = rets.std()
     sharpe = float((mu / sigma) * np.sqrt(annualise_factor)) if sigma > 0 else float("nan")
 
-    # Max drawdown
+    # Max drawdown (log and simple)
     cum = bt["cumulative_ret"]
     running_max = cum.cummax()
     drawdown = cum - running_max
     max_dd = float(drawdown.min())
+    max_dd_simple = float(np.expm1(max_dd))  # convert to simple %
+
+    # Wipeout detection: flag if capital dropped 95%+ at any point
+    wiped_out = max_dd_simple <= -0.95
+    wipeout_bar = None
+    if wiped_out:
+        wipeout_bar = (np.expm1(cum) <= -0.95).idxmax()
 
     # Turnover: number of position changes / total bars
     trades = (positions.diff().abs() > 0).sum()
@@ -141,7 +148,10 @@ def compute_backtest_stats(bt: pd.DataFrame, annualise_factor: int = 98_000) -> 
         "total_log_return": float(total_log_ret),
         "total_simple_return": total_simple_ret,
         "annualised_sharpe": sharpe,
-        "max_drawdown": max_dd,
+        "max_drawdown_log": max_dd,
+        "max_drawdown_pct": max_dd_simple,
+        "wiped_out": wiped_out,
+        "wipeout_bar": wipeout_bar,
         "n_trades": int(trades),
         "n_bars": total_bars,
         "turnover_rate": turnover,

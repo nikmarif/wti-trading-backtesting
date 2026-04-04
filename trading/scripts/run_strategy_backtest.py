@@ -173,15 +173,20 @@ def main() -> None:
     print(f"  Cost per trade:    {cost_per_trade:>10.5f}")
     print(f"  Slippage:          {slippage:>10.5f}")
     print()
+
+    if stats["wiped_out"]:
+        print("  !! WIPEOUT — capital dropped 95%+ at some point.")
+        print("  !! In a real account this would be a margin call / forced close.")
+        print()
+
     print("  Performance")
     print(f"    Sharpe (ann.):   {stats['annualised_sharpe']:>12.3f}")
-    print(f"    Total log ret:   {stats['total_log_return']:>12.4f}")
-    print(f"    Total simple ret:{stats['total_simple_return']:>12.4f}")
-    print(f"    Max drawdown:    {stats['max_drawdown']:>12.4f}")
-    print(f"    Hit rate:        {stats['hit_rate']:>12.4f}")
+    print(f"    Total return:    {stats['total_simple_return']:>12.2%}  (log: {stats['total_log_return']:.4f})")
+    print(f"    Max drawdown:    {stats['max_drawdown_pct']:>12.2%}  (log: {stats['max_drawdown_log']:.4f})")
+    print(f"    Hit rate:        {stats['hit_rate']:>12.2%}")
     print(f"    N trades:        {stats['n_trades']:>12,}")
     print(f"    Turnover rate:   {stats['turnover_rate']:>12.4f}")
-    print(f"    Avg ret/trade:   {stats['avg_ret_per_trade']:>12.6f}")
+    print(f"    Avg ret/bar:     {stats['avg_ret_per_trade']:>12.6f}  (log, per active bar)")
     print()
     print("  Position breakdown")
     print(f"    Long:            {stats['fraction_long']:>12.2%}")
@@ -191,11 +196,14 @@ def main() -> None:
 
     # ── Trade chart ───────────────────────────────────────────────────────────
     if args.plot:
+        indicators = strategy.get_indicators(ohlcv)
         chart_path = plot_strategy_trades(
             bt=bt,
             strategy_name=str(strategy),
             artifacts_dir=artifacts_dir,
             max_bars=args.plot_bars,
+            prices=ohlcv["close"],
+            indicators=indicators if indicators else None,
         )
         print(f"  Chart saved → {chart_path}\n")
 

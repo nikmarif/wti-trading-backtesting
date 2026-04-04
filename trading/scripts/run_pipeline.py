@@ -120,7 +120,7 @@ def main() -> None:
         bt_cfg["threshold"],
         bt_stats["annualised_sharpe"],
         bt_stats["total_log_return"],
-        bt_stats["max_drawdown"],
+        bt_stats["max_drawdown_pct"],
         bt_stats["hit_rate"],
         bt_stats["n_trades"],
     )
@@ -173,7 +173,7 @@ def main() -> None:
     print(f"  Backtest (threshold={bt_cfg['threshold']:.5f})")
     print(f"    Sharpe (ann.):   {bt_stats['annualised_sharpe']:>12.3f}")
     print(f"    Total log ret:   {bt_stats['total_log_return']:>12.4f}")
-    print(f"    Max drawdown:    {bt_stats['max_drawdown']:>12.4f}")
+    print(f"    Max drawdown:    {bt_stats['max_drawdown_pct']:>12.2%}  (log: {bt_stats['max_drawdown_log']:.4f})")
     print(f"    Hit rate:        {bt_stats['hit_rate']:>12.4f}")
     print(f"    N trades:        {bt_stats['n_trades']:>12,}")
     print()

@@ -42,6 +42,14 @@ class BaseStrategy(abc.ABC):
             +1 = long, -1 = short, 0 = flat. Same index as ohlcv.
         """
 
+    def get_indicators(self, ohlcv: pd.DataFrame) -> dict[str, pd.Series]:
+        """
+        Optional: return indicator series to overlay on the trade chart.
+        Override in subclasses to expose strategy-specific lines (MAs, bands, etc.).
+        Returns an empty dict by default.
+        """
+        return {}
+
     def __repr__(self) -> str:
         params = ", ".join(f"{k}={v}" for k, v in self.__dict__.items())
         return f"{self.__class__.__name__}({params})"
